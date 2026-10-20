@@ -224,20 +224,26 @@ def initialize_mcp(approval_callback=None) -> int:
     # 拿到 None 按 fail-safe 恒 False，用户配置开了也连不上（内联 spawn
     # 路径 delegate_child 就传了，这里是漏传不是设计）
     try:
-        from agent.settings import load_settings
+        from agent.settings import load_settings, settings_path
         _app_cfg = load_settings()
+        # load_settings 对坏文件会退回默认值；这种情况不能启动默认联网服务。
+        if not isinstance(json.loads(settings_path().read_text(encoding="utf-8")), dict):
+            _app_cfg = None
     except Exception:
         _app_cfg = None
     try:
         # 用户级配置（用户直接控制，直接连）
-        manager.connect_all(app_config=_app_cfg)
+        # settings 迁移会把旧 .mcp.json 改名，所以先取迁移后的配置。
+        # 仍存在的旧文件保留原先优先级，不用默认服务覆盖显式选择。
+        from agent.mcp_client import load_mcp_config, load_project_mcp_config
+        user_cfg = dict((_app_cfg or {}).get("mcpServers") or {})
+        user_cfg.update(load_mcp_config())
+        manager.connect_all(user_cfg, app_config=_app_cfg)
 
         # 项目级 .mcp.json 首连审批
-        from agent.mcp_client import load_mcp_config, load_project_mcp_config
         from agent.settings import is_project_mcp_approved, persist_project_mcp_approval
 
         proj_path, proj_servers = load_project_mcp_config()
-        user_cfg = load_mcp_config()
         if proj_path and proj_servers:
             # 路径转小写归一（Windows 盘符大小写不敏感，避免同路径判成两个项目）
             proj_key = str(proj_path.parent.resolve()).lower()
@@ -329,6 +335,36 @@ def initialize_mcp(approval_callback=None) -> int:
             conn: info["cfg"] for conn, info in plugin_servers.items()
             if conn not in user_cfg
         }
+        # 只为未配置的安装提供默认搜索。配置了服务器但连接失败时不回退，
+        # 项目服务器未批准也不偷换成另一个服务；显式空旧文件同样算选择。
+        from constants import get_codeagent_home
+        home = get_codeagent_home()
+        if (
+            _app_cfg is not None
+            and _app_cfg.get("mcp_builtin_search", True) is True
+            and "mcp" in (_app_cfg.get("enabled_toolsets") or [])
+            and not (user_cfg or proj_path or inline_servers or plugin_servers)
+            and not (home / ".mcp.json").exists()
+            and not (home / ".mcp.json.bak").exists()
+        ):
+            from agent.tool_permissions import is_tool_denied
+            names = ("web_search", "web_fetch")
+            disabled = _app_cfg.get("disabled_tools") or []
+            allowed = [
+                name for name in names
+                if f"mcp__parallel-search__{name}" not in disabled
+                and not is_tool_denied(f"mcp__parallel-search__{name}")
+            ]
+            if allowed:
+                manager.connect_all({"parallel-search": {
+                    "transport": "http",
+                    "url": "https://search.parallel.ai/mcp",
+                    "headers": {
+                        "User-Agent": "CodeAgent/0.1.0",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                    "include": allowed,
+                }}, app_config=_app_cfg)
         # 先全量登记（此刻插件 server 还没连接，不会撞名），插件侧再由
         # connect_servers_and_register 登记它自己那份——顺序反了的话这里
         # 的无差别重注册会对每个插件工具刷一遍"重复注册"警告
