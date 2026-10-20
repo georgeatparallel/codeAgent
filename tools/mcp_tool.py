@@ -343,12 +343,20 @@ def initialize_mcp(approval_callback=None) -> int:
         # 只为未配置的安装提供默认搜索。配置了服务器但连接失败时不回退，
         # 项目服务器未批准也不偷换成另一个服务；显式空旧文件同样算选择。
         from constants import get_codeagent_home
+        from agent.workspace_context import get_workspace_cwd
         home = get_codeagent_home()
+        # agent 定义解析器会跳过坏文件；保守地把自定义定义文件也视为配置，
+        # 避免没读到内联服务器时误启默认服务。
+        custom_agents = (
+            any((home / "agents").glob("*.md"))
+            or any((Path(get_workspace_cwd()) / ".codeAgent" / "agents").glob("*.md"))
+        )
         if (
             _app_cfg is not None
             and _app_cfg.get("mcp_builtin_search", True) is True
             and "mcp" in (_app_cfg.get("enabled_toolsets") or [])
             and inline_discovery_ok and not (plugin_errors or plugin_configs)
+            and not custom_agents
             and not (user_cfg or proj_path or inline_servers or plugin_servers)
             and not (home / ".mcp.json").exists()
             and not (home / ".mcp.json.bak").exists()
@@ -427,6 +435,8 @@ def collect_plugin_mcp_servers(*, errors: list = None, configured: list = None) 
             continue
         if not data.get("enabled", True):
             continue
+        if configured is not None and any((pdir / "agents").glob("*.md")):
+            configured.append(str(pdir / "agents"))
         mcp_file = pdir / ".mcp.json"
         if not mcp_file.exists():
             continue

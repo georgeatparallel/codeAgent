@@ -120,6 +120,7 @@ loads their full parameter schemas. The existing built-in `web_fetch` still down
 The preset is used only when the `mcp` toolset is enabled and no user, project,
 inline-agent or plugin MCP configuration exists. Saved server choices and credentials
 take precedence, including when a configured server fails or awaits approval.
+Custom agent definition files also suppress the automatic preset, even if they cannot be parsed.
 To disable the preset, set `"mcp_builtin_search": false` in `~/.codeAgent/settings.json`
 and restart. Existing saved `enabled_toolsets` arrays are preserved; add `"mcp"` to
 enable MCP tools in an older profile. `permissions.deny` and `disabled_tools` also apply.

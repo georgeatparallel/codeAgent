@@ -246,6 +246,22 @@ def test_discovery_failure_no_default_connection(runtime, monkeypatch, location)
     assert runtime.requests == []
 
 
+@pytest.mark.parametrize("location", ["user", "project", "plugin"])
+def test_custom_agent_files_suppress_default_even_if_unparseable(runtime, location):
+    if location == "user":
+        directory = runtime.home / "agents"
+    elif location == "project":
+        directory = runtime.workspace / ".codeAgent" / "agents"
+    else:
+        directory = runtime.home / "plugins" / "chosen" / "agents"
+        directory.parent.mkdir(parents=True)
+        (directory.parent / "plugin.json").write_text('{"enabled":true}', encoding="utf-8")
+    directory.mkdir(parents=True)
+    (directory / "chosen.md").write_text('---\nname: chosen\ninlineMcpServers: [broken\n---\n', encoding="utf-8")
+    mcp_tool.initialize_mcp()
+    assert runtime.requests == []
+
+
 @pytest.mark.parametrize("failure, expected", [("timeout", "fixture timeout"), ("http", "503"),
                                                 ("rpc", "invalid arguments"), ("tool", "service rejected query")])
 def test_dispatch_errors_are_visible(runtime, failure, expected):

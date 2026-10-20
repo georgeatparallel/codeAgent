@@ -119,6 +119,7 @@ uv run python main.py -c           # 自动恢复最近一次会话
 
 默认服务只在启用 `mcp` 工具集且没有用户、项目、agent 内联或插件 MCP 配置时使用。
 已有服务器选择和凭据优先，连接失败或等待审批时也不会自动改用默认服务。
+存在自定义 agent 定义文件时也不启用默认服务，即使文件无法解析。
 在 `~/.codeAgent/settings.json` 设置 `"mcp_builtin_search": false` 并重启即可关闭。
 已有的 `enabled_toolsets` 数组保持不变，旧 profile 需要添加 `"mcp"` 才能使用 MCP 工具。
 `permissions.deny` 和 `disabled_tools` 同样生效。匿名服务有使用限额，达到限额会返回错误，
