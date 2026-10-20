@@ -170,7 +170,7 @@ def test_explicit_server_no_fallback(runtime, monkeypatch, location):
     elif location == "inline":
         monkeypatch.setattr("agent.agent_defs.project_inline_mcp_servers", lambda: cfg)
     elif location == "plugin":
-        monkeypatch.setattr(mcp_tool, "collect_plugin_mcp_servers", lambda: {"chosen": {"cfg": cfg["chosen"]}})
+        monkeypatch.setattr(mcp_tool, "collect_plugin_mcp_servers", lambda **kw: {"chosen": {"cfg": cfg["chosen"]}})
     attempts = []
 
     def unavailable(name, config, **kwargs):
@@ -198,6 +198,50 @@ def test_explicit_empty_config_no_fallback(runtime, location):
 @pytest.mark.parametrize("content", ["{broken", "[]"])
 def test_invalid_settings_no_default_connection(runtime, content):
     (runtime.home / "settings.json").write_text(content, encoding="utf-8")
+    mcp_tool.initialize_mcp()
+    assert runtime.requests == []
+
+
+@pytest.mark.parametrize("content", ['{"mcpServers":{"chosen":', '{"mcpServers": []}',
+                                     '{"mcpServers": {"chosen": null}}', '{"mcpServers": {}}'])
+def test_invalid_plugin_config_no_default_connection(runtime, content):
+    plugin = runtime.home / "plugins" / "chosen"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.json").write_text('{"enabled": true}', encoding="utf-8")
+    (plugin / ".mcp.json").write_text(content, encoding="utf-8")
+    mcp_tool.initialize_mcp()
+    assert runtime.requests == []
+
+
+def test_bad_plugin_does_not_discard_other_servers(runtime, monkeypatch):
+    root = runtime.home / "plugins"
+    for name, content in [("bad", '{"mcpServers":'),
+                          ("good", '{"mcpServers":{"chosen":{"url":"https://chosen.example/mcp"}}}')]:
+        plugin = root / name
+        plugin.mkdir(parents=True)
+        (plugin / "plugin.json").write_text('{"enabled":true}', encoding="utf-8")
+        (plugin / ".mcp.json").write_text(content, encoding="utf-8")
+    attempts = []
+
+    def unavailable(name, config, **kwargs):
+        attempts.append((name, config))
+        raise RuntimeError("configured server unavailable")
+
+    monkeypatch.setattr(runtime.manager, "connect_one", unavailable)
+    mcp_tool.initialize_mcp()
+    assert attempts == [("chosen", {"url": "https://chosen.example/mcp"})]
+    assert runtime.requests == []
+
+
+@pytest.mark.parametrize("location", ["inline", "plugin"])
+def test_discovery_failure_no_default_connection(runtime, monkeypatch, location):
+    def unavailable(**kwargs):
+        raise OSError("fixture configuration discovery failed")
+
+    if location == "inline":
+        monkeypatch.setattr("agent.agent_defs.project_inline_mcp_servers", unavailable)
+    else:
+        monkeypatch.setattr(mcp_tool, "collect_plugin_mcp_servers", unavailable)
     mcp_tool.initialize_mcp()
     assert runtime.requests == []
 

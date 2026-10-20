@@ -279,11 +279,13 @@ def initialize_mcp(approval_callback=None) -> int:
 
         # 项目级 agent .md 里内联声明的 MCP server 走同款首连审批
         # （威胁模型跟项目 .mcp.json 一样：clone 陌生 repo 可能带进恶意配置）
+        inline_discovery_ok = True
         try:
             from agent.agent_defs import project_inline_mcp_servers
             inline_servers = project_inline_mcp_servers()
         except Exception:
             inline_servers = {}
+            inline_discovery_ok = False
         if inline_servers:
             from agent.settings import mcp_approval_key
             # proj_key 统一取 workspace cwd resolve 后转小写——项目可能只有
@@ -326,11 +328,14 @@ def initialize_mcp(approval_callback=None) -> int:
         # 插件自带的 MCP server（.mcp.json）：用户主动 /plugin install
         # 装的 = 明确授权，直接连，不再走审批。与用户级同名的跳过
         # （用户手写的配置优先级最高，跟项目级同款规则）。
+        plugin_errors = []
+        plugin_configs = []
         try:
-            plugin_servers = collect_plugin_mcp_servers()
+            plugin_servers = collect_plugin_mcp_servers(errors=plugin_errors, configured=plugin_configs)
         except Exception as e:
             logger.warning("插件 MCP 扫描失败（跳过）: %s", e)
             plugin_servers = {}
+            plugin_errors.append(str(e))
         plugin_wanted = {
             conn: info["cfg"] for conn, info in plugin_servers.items()
             if conn not in user_cfg
@@ -343,6 +348,7 @@ def initialize_mcp(approval_callback=None) -> int:
             _app_cfg is not None
             and _app_cfg.get("mcp_builtin_search", True) is True
             and "mcp" in (_app_cfg.get("enabled_toolsets") or [])
+            and inline_discovery_ok and not (plugin_errors or plugin_configs)
             and not (user_cfg or proj_path or inline_servers or plugin_servers)
             and not (home / ".mcp.json").exists()
             and not (home / ".mcp.json.bak").exists()
@@ -378,7 +384,7 @@ def initialize_mcp(approval_callback=None) -> int:
         return 0
 
 
-def collect_plugin_mcp_servers() -> Dict[str, dict]:
+def collect_plugin_mcp_servers(*, errors: list = None, configured: list = None) -> Dict[str, dict]:
     """扫所有已启用插件根下的 .mcp.json，汇总插件要连的 MCP server。
 
     只看「已启用」的插件（清单 enabled 字段，判法和
@@ -391,6 +397,8 @@ def collect_plugin_mcp_servers() -> Dict[str, dict]:
     返回 {连接名: {"plugin": 插件名, "cfg": server配置, "dir": 插件目录}}。
     连接名默认用 server 本名；两个插件撞名时后扫的改成
     <插件名>_<server>（扫描按名字排序，结果确定）。
+    errors 可接收读坏的配置路径：调用方据此关闭默认回退，同时保留其他有效插件。
+    configured 可接收启用插件的 .mcp.json 路径，显式空配置也算用户选择。
     """
     from constants import plugins_dir
     import json as _json
@@ -410,23 +418,37 @@ def collect_plugin_mcp_servers() -> Dict[str, dict]:
         try:
             data = _json.loads(mf.read_text(encoding="utf-8"))
         except Exception:
+            if errors is not None:
+                errors.append(str(mf))
+            continue
+        if not isinstance(data, dict):
+            if errors is not None:
+                errors.append(str(mf))
             continue
         if not data.get("enabled", True):
             continue
         mcp_file = pdir / ".mcp.json"
         if not mcp_file.exists():
             continue
+        if configured is not None:
+            configured.append(str(mcp_file))
         try:
             servers = _json.loads(
                 mcp_file.read_text(encoding="utf-8")
             ).get("mcpServers", {})
         except Exception as e:
             logger.warning("插件 %s 的 .mcp.json 读坏（跳过）: %s", pdir.name, e)
+            if errors is not None:
+                errors.append(str(mcp_file))
             continue
         if not isinstance(servers, dict):
+            if errors is not None:
+                errors.append(str(mcp_file))
             continue
         for sname, cfg in servers.items():
             if not isinstance(cfg, dict):
+                if errors is not None:
+                    errors.append(str(mcp_file))
                 continue
             # ${CLAUDE_PLUGIN_ROOT} → 插件实际路径（command/args 里都换）
             cfg = _json.loads(_json.dumps(cfg))  # 深拷贝，别改插件原文件的内容
