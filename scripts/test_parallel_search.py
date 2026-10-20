@@ -202,6 +202,24 @@ def test_invalid_settings_no_default_connection(runtime, content):
     assert runtime.requests == []
 
 
+@pytest.mark.parametrize("patch", [
+    {"mcpServers": value} for value in (None, False, [], 0, "")
+] + [
+    {"enabled_toolsets": "mcp"},
+    {"disabled_tools": None},
+    {"permissions": None},
+    {"permissions": {"deny": "mcp__parallel-search"}},
+    {"permissions": {"deny": [None]}},
+    {"mcp_builtin_search": "true"},
+])
+def test_malformed_setting_types_do_not_authorize_default(runtime, patch):
+    (runtime.home / "settings.json").write_text(json.dumps({
+        "enabled_toolsets": ["core", "mcp"], **patch,
+    }), encoding="utf-8")
+    mcp_tool.initialize_mcp()
+    assert runtime.requests == []
+
+
 @pytest.mark.parametrize("content", ['{"mcpServers":{"chosen":', '{"mcpServers": []}',
                                      '{"mcpServers": {"chosen": null}}', '{"mcpServers": {}}'])
 def test_invalid_plugin_config_no_default_connection(runtime, content):

@@ -203,6 +203,28 @@ def _register_resource_tools(manager: MCPManager, servers: list = None) -> int:
     return registered
 
 
+def _builtin_search_settings_valid(settings) -> bool:
+    """默认联网前验证原始设置：坏类型不能被深合并或 `or {}` 当成未配置。"""
+    if not isinstance(settings, dict) or not isinstance(settings.get("mcpServers", {}), dict):
+        return False
+    for key in ("enabled_toolsets", "disabled_tools"):
+        if key in settings and (
+            not isinstance(settings[key], list)
+            or any(not isinstance(item, str) for item in settings[key])
+        ):
+            return False
+    if "mcp_builtin_search" in settings and type(settings["mcp_builtin_search"]) is not bool:
+        return False
+    permissions = settings.get("permissions", {})
+    if not isinstance(permissions, dict):
+        return False
+    return all(
+        isinstance(permissions.get(key, []), list)
+        and all(isinstance(rule, str) for rule in permissions.get(key, []))
+        for key in ("allow", "deny", "ask")
+    )
+
+
 def initialize_mcp(approval_callback=None) -> int:
     """启动时的总入口：加载配置 → 连接 server → 登记工具。
 
@@ -227,10 +249,12 @@ def initialize_mcp(approval_callback=None) -> int:
         from agent.settings import load_settings, settings_path
         _app_cfg = load_settings()
         # load_settings 对坏文件会退回默认值；这种情况不能启动默认联网服务。
-        if not isinstance(json.loads(settings_path().read_text(encoding="utf-8")), dict):
-            _app_cfg = None
+        default_settings_ok = _builtin_search_settings_valid(
+            json.loads(settings_path().read_text(encoding="utf-8"))
+        )
     except Exception:
         _app_cfg = None
+        default_settings_ok = False
     try:
         # 用户级配置（用户直接控制，直接连）
         # settings 迁移会把旧 .mcp.json 改名，所以先取迁移后的配置。
@@ -353,6 +377,7 @@ def initialize_mcp(approval_callback=None) -> int:
         )
         if (
             _app_cfg is not None
+            and default_settings_ok
             and _app_cfg.get("mcp_builtin_search", True) is True
             and "mcp" in (_app_cfg.get("enabled_toolsets") or [])
             and inline_discovery_ok and not (plugin_errors or plugin_configs)
